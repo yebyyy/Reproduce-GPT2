@@ -4,6 +4,45 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+# The name of the variables are kept same as in the huggingface implementation
+# So that we can port the weights easily
+
+class CaulsalSelfAttention(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        assert config.n_embd % config.n_head == 0
+        # key, query, value projections for all heads, but in one batch
+        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        # regularization
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        # mask
+        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
+                            .view(1, 1, config.block_size, config.block_size))
+
+    def forward(self, x):
+        B, T, C = x.size()  # B: batch size, T: sequence length, C: channels
+        # calculate query, key, value
+        qkv = self.c_attn(x)  # Emits 3 * n_embd
+        q, k, v = qkv.split(self.n_embd, dim=2)
+        # split into multiple heads, n_head act like a batch size
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
+        # attention
+        att = (q @ k.transpose(-2, -1)) * (1.0 / (C // self.n_head) ** 0.5)
+        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))
+        att = F.softmax(att, dim=-1)  # attention as probabilities of each token
+        y = att @ v  # (B, nh, T, T) * (B, nh T, hs)  # tokens as weighted sum of values
+        y = y.transpose(1, 2).contiguous().view(B, T, C) 
+        # contiguous() is used to make sure the tensor is stored in a contiguous chunk of memory
+        # This is necessary if you want to use view() on the tensor and equivalent to concatenating the tensor
+        # output projection
+        return self.c_proj(y)
+
+
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
