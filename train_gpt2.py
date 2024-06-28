@@ -4,6 +4,30 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class MLP(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4)
+        self.gelu = nn.GELU(approximate="tanh")  # Gelu is a non-linear activation function
+        self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd)
+    def forward(self, x):
+        return self.c_proj(self.gelu(self.c_fc(x)))
+
+
+class Block(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.ln_1 = nn.LayerNorm(config.n_embd)
+        self.ln_2 = nn.LayerNorm(config.n_embd)
+        self.attn = CaulsalSelfAttention(config)
+        self.mlp = MLP(config)
+    
+    def forward(self, x):
+        x = x + self.attn(self.ln_1(x))  # Attention acts like reducing
+        x = x + self.mlp(self.ln_2(x))  # MLP acts like mapping
+        return x
+
+
 @dataclass
 class GPT2Config:
     block_size: int = 256
