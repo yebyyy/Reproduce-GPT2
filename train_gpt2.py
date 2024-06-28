@@ -19,3 +19,16 @@ class GPT2(nn.Module):
         self.config = config
         # config is a dataclass object
         
+        # The skeleton of the model
+        self.transformer = nn.ModuleDict(dict(
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.block_size, config.n_embd),
+            h = nn.ModuleList(Block(config) for _ in range(config.n_layer)),  # h stands for head
+            ln_f = nn.LayerNorm(config.n_embd),
+        ))
+        # This gives a dictionary of the form: 
+        # "wte": nn.Embedding, 
+        # "wpe": nn.Embedding, 
+        # "h": nn.ModuleList, 
+        # "ln_f": nn.LayerNorm
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
