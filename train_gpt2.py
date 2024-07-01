@@ -96,6 +96,24 @@ class GPT2(nn.Module):
         # "ln_f": nn.LayerNorm
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
+    def forward(self, idx):
+        # idx is of shape (B, T) since it is a batch of tokens
+        B, T = idx.size()
+        assert T <= self.config.block_size, f"Cannot forward length{T}, block size is exhausted"
+        # Token embedding and positional embedding
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        pos_emb = self.transformer['wpe'](pos)  # (T, n_embd)
+        tok_emb = self.transformer['wte'](idx)  # (B, T, n_embd)
+        idx = tok_emb + pos_emb                   # (B, T, n_embd)
+        # Transformer
+        for block in self.transformer['h']:
+            idx = block(idx)                        # (B, T, n_embd)
+        # Final layer norm
+        idx = self.transformer['ln_f'](idx)         # (B, T, n_embd)
+        # Language model head
+        logits = self.lm_head(idx)                  # (B, T, vocab_size)
+        return logits
+
     @classmethod
     def from_pretrained(cls, model_type):
         """Loads pretrained GPT-2 model weights from huggingface"""
