@@ -33,7 +33,7 @@ class CaulsalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
         # attention
         att = (q @ k.transpose(-2, -1)) * (1.0 / (C // self.n_head) ** 0.5)
-        att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float('-inf'))
+        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
         att = F.softmax(att, dim=-1)  # attention as probabilities of each token
         y = att @ v  # (B, nh, T, T) * (B, nh T, hs)  # tokens as weighted sum of values
         y = y.transpose(1, 2).contiguous().view(B, T, C) 
@@ -78,7 +78,7 @@ class GPT2Config:
 class GPT2(nn.Module):
 
     def __init__(self, config):
-        super.__init__()
+        super().__init__()
         self.config = config
         # config is a dataclass object
         
@@ -131,8 +131,8 @@ class GPT2(nn.Module):
         config_args['vocab_size'] = 50257 # always 50257 for GPT model checkpoints
         config_args['block_size'] = 1024 # always 1024 for GPT model checkpoints
         # create a from-scratch initialized minGPT model
-        config = GPTConfig(**config_args)
-        model = GPT(config)
+        config = GPT2Config(**config_args)
+        model = GPT2(config)
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
@@ -162,3 +162,53 @@ class GPT2(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+
+
+# Sampling
+    # from transformers import pipeline, set_seed
+    # set_seed(42)
+    # generator = pipeline('text-generation', model="gpt2")
+    # generator("Hello, I'm a Language Model,", max_length=30, num_return_sequences=5)
+  # We need to implement the sampling function in the GPT2 class similar to the huggingface implementation
+num_return_sequences = 5
+max_length = 30
+
+model = GPT2.from_pretrained('gpt2')  # Load the model
+model.eval()  # Set the model to evaluation mode()
+model.to('cuda')
+
+  # prefix tokens
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
+tokens = enc.encode("Hello, I'm a Language Model,")
+tokens = torch.tensor(tokens, dtype=torch.long)  # (T,)
+tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)  # (5, T)
+# torch.Tensor.repeat() repeats the tensor along the specified dimensions
+x = tokens.to("cuda")  # (5, T)
+
+  # generate
+torch.manual_seed(42)
+torch.cuda.manual_seed(42)
+while x.size(1) < max_length:
+    with torch.no_grad():
+        logits = model(x)  # (B, T, vocab_size)
+        # take the logits of the last token
+        logits = logits[:, -1, :]  # (B, vocab_size)
+        probs = F.softmax(logits, dim=-1)  # (B, vocab_size)
+        # do topk sampling of 50, which is the huggingface default
+        # only keep the top 50 tokens with the highest probability
+        # anything after the top 50 will have its probability set to 0
+        topk_probs, topk_idx = torch.topk(probs, 50, dim = -1)  # (B, 50)
+        # select a token from the top 50
+        ix = torch.multinomial(topk_probs, num_samples=1)  # (B, 1)
+        # gather the corresponding indices
+        xcol = torch.gather(topk_idx, -1, ix)  # (B, 1)
+        # torch.gather() gathers values along an axis dim from the input tensor
+        # append to the sequence
+        x = torch.cat((x, xcol), dim=1)
+
+# print
+for i in range(num_return_sequences):
+    tokens = x[i, :max_length].tolist()
+    decoded = enc.decode(tokens)
+    print(">", decoded)
