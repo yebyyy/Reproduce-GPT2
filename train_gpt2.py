@@ -163,6 +163,14 @@ class GPT2(nn.Module):
 
         return model
 
+# -----------------------------------------------------------------------------------
+# Auto Detect GPU
+device = "cpu"
+if torch.cuda.is_available():
+    device = "cuda"
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    device = "mps"
+print("device: " + device)
 
 # Sampling
     # from transformers import pipeline, set_seed
@@ -173,7 +181,8 @@ class GPT2(nn.Module):
 num_return_sequences = 5
 max_length = 30
 
-model = GPT2.from_pretrained('gpt2')  # Load the model
+# model = GPT2.from_pretrained('gpt2')  # Load the model
+model = GPT2(GPT2Config())
 model.eval()  # Set the model to evaluation mode()
 model.to('cuda')
 
