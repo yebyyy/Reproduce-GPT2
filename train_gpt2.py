@@ -96,7 +96,7 @@ class GPT2(nn.Module):
         # "ln_f": nn.LayerNorm
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
         # idx is of shape (B, T) since it is a batch of tokens
         B, T = idx.size()
         assert T <= self.config.block_size, f"Cannot forward length{T}, block size is exhausted"
@@ -112,7 +112,11 @@ class GPT2(nn.Module):
         idx = self.transformer['ln_f'](idx)         # (B, T, n_embd)
         # Language model head
         logits = self.lm_head(idx)                  # (B, T, vocab_size)
-        return logits
+        # Loss calculation
+        loss = None
+        if targets is not None:
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))  # This gives around 11, which is ok for random initialization given that -ln(1/50257) = 10.8
+        return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -171,6 +175,30 @@ if torch.cuda.is_available():
 elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
     device = "mps"
 print("device: " + device)
+
+# Load Data
+import tiktoken
+enc = tiktoken.get_encoding('gpt2')
+with open("input.txt", "r") as f:
+    text = f.read()
+text = text[:1000]
+tokens = enc.encode(text)
+B, T = 4, 32
+buf = torch.tensor(tokens[ : B * T + 1]).to(device)
+x = buf[:-1].view(B, T)
+y = buf[1: ].view(B, t)
+
+# Train
+model = GPT2(GPT2Config())
+model.to(device)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
+for i in range(50):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step {i}, loss {loss.item()}")
 
 # Sampling
     # from transformers import pipeline, set_seed
