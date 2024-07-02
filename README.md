@@ -21,3 +21,14 @@ By loading the gpt2 124M model weights from huggingface transformers, the sampli
 
 > Hello, I'm a Language Model, a Python Language Model, and I believe that's more important than ever.
 So I'm here with
+
+The random initialization gives sampling results like this:
+> Hello, I'm a Language Model,ossal damages brands Last compe SIL Satoshi nav Sick op integrationWind stancesepar charms stamp Image Decl convenient characterizemma defund
+
+> Hello, I'm a Language Model,acerimpl Lars Swansea consisted noticeQuery Tul': pancreatadoise forgiveMotherginx accord583 issue smoothly Toolsurated anarchist
+
+> Hello, I'm a Language Model,usional eaves insistenceigmatic thought fascistpheus prost Atlantic usability circuitoothuta Represent centuries� waves REGDoug impeccChinese MIDI
+
+> Hello, I'm a Language Model, Wim sarc(&OTUS jokinglandoSen adjustable562 Girolid propibe.} Yamahaverett Idol nearing iodine exc stealth Lerner
+
+> Hello, I'm a Language Model,ä rebounds married Nashoufl STARTxb apprentice Deskandel CTRL vaUGE endifitability Mech receptCondition Rap Chr Fu044
