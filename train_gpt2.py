@@ -15,6 +15,7 @@ class CaulsalSelfAttention(nn.Module):
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
+        self.c_proj.GPT_SCALE_INIT = 1  # GPT uses 1/sqrt(n_embd) for scaling
         # regularization
         self.n_head = config.n_head
         self.n_embd = config.n_embd
@@ -49,6 +50,7 @@ class MLP(nn.Module):
         self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4)
         self.gelu = nn.GELU(approximate="tanh")  # Gelu is a non-linear activation function
         self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd)
+        self.c_proj.GPT_SCALE_INIT = 1
     def forward(self, x):
         return self.c_proj(self.gelu(self.c_fc(x)))
 
@@ -105,7 +107,10 @@ class GPT2(nn.Module):
 
     def _init_weights(self, module):  # module is inside the model
         if isinstance(module, (nn.Linear, nn.Embedding)):
-            torch.nn.init.normal_(model.weight, mean=0.0, std=0.02)
+            std = 0.02
+            if hasattr(module, "GPT_SCALE_INIT"):
+                std *= (2 * self.config.n_layer) ** -0.5  # for each block we have 2 residual layers 1 for attention and 1 for MLP
+            torch.nn.init.normal_(model.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         # no need to initialize LayerNorm, since pytorch initializes it with zeros and ones
