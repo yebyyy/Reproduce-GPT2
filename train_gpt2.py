@@ -106,13 +106,18 @@ class GPT2(nn.Module):
         self.apply(self._init_weights)  # Applies the _init_weights function to all the modules in the model)
 
     def _init_weights(self, module):  # module is inside the model
-        if isinstance(module, (nn.Linear, nn.Embedding)):
+        if isinstance(module, nn.Linear):
             std = 0.02
             if hasattr(module, "GPT_SCALE_INIT"):
                 std *= (2 * self.config.n_layer) ** -0.5  # for each block we have 2 residual layers 1 for attention and 1 for MLP
-            torch.nn.init.normal_(model.weight, mean=0.0, std=std)
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            std = 0.02
+            if hasattr(module, "GPT_SCALE_INIT"):
+                std *= (2 * self.config.n_layer) ** -0.5
+            torch.nn.init.normal_(module.weight, mean=0.0, std=std)
         # no need to initialize LayerNorm, since pytorch initializes it with zeros and ones
 
     def forward(self, idx, targets=None):
@@ -208,8 +213,8 @@ class DataLoaderLite:
     def next_batch(self):
         B, T = self.B, self.T
         buf = self.tokens[self.current_position : self.current_position + B * T + 1]
-        x = {buf[:-1].view(B, T)}  # inputs
-        y = {buf[1: ].view(B, T)}  # targets
+        x = (buf[:-1]).view(B, T)  # inputs
+        y = (buf[1: ]).view(B, T)  # targets
         # move the position
         self.current_position += B * T
         # reset the position if we reach the end
