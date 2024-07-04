@@ -246,6 +246,8 @@ for i in range(50):
     optimizer.step()
     print(f"step {i}, loss {loss.item()}")
 
+import sys; sys.exit(0)
+
 # Sampling
     # from transformers import pipeline, set_seed
     # set_seed(42)
