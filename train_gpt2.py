@@ -96,6 +96,20 @@ class GPT2(nn.Module):
         # "ln_f": nn.LayerNorm
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
+        # lm_head and wte share the same weights
+        self.lm_head.weight = self.transformer['wte'].weight
+        # The shapes of lm_head and wte are different, but weights can be transposed, and they share the data
+
+        # Initialize weights
+        self.apply(self._init_weights)  # Applies the _init_weights function to all the modules in the model)
+
+    def _init_weights(self, module):  # module is inside the model
+        if isinstance(module, (nn.Linear, nn.Embedding)):
+            torch.nn.init.normal_(model.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        # no need to initialize LayerNorm, since pytorch initializes it with zeros and ones
+
     def forward(self, idx, targets=None):
         # idx is of shape (B, T) since it is a batch of tokens
         B, T = idx.size()
