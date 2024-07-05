@@ -33,15 +33,17 @@ class CaulsalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)  # B, n_head, T, C//n_head
         # attention
-        att = (q @ k.transpose(-2, -1)) * (1.0 / (C // self.n_head) ** 0.5)
-        att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)  # attention as probabilities of each token
-        y = att @ v  # (B, nh, T, T) * (B, nh T, hs)  # tokens as weighted sum of values
+        # att = (q @ k.transpose(-2, -1)) * (1.0 / (C // self.n_head) ** 0.5)
+        # att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
+        # att = F.softmax(att, dim=-1)  # attention as probabilities of each token
+        # y = att @ v  # (B, nh, T, T) * (B, nh T, hs)  # tokens as weighted sum of values
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         y = y.transpose(1, 2).contiguous().view(B, T, C) 
         # contiguous() is used to make sure the tensor is stored in a contiguous chunk of memory
         # This is necessary if you want to use view() on the tensor and equivalent to concatenating the tensor
         # output projection
         return self.c_proj(y)
+    
 
 class MLP(nn.Module):
     def __init__(self, config):
@@ -236,7 +238,7 @@ torch.set_float32_matmul_precision("high")
 train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config())
 model.to(device)
-model = torch.compile(model)  # does not work with python 3.12
+# model = torch.compile(model)  # does not work with python 3.12
 
 import time
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
