@@ -43,7 +43,6 @@ class CaulsalSelfAttention(nn.Module):
         # output projection
         return self.c_proj(y)
 
-
 class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
@@ -232,11 +231,12 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print("device: " + device)
 
 # Train
+torch.set_float32_matmul_precision("high")
+
 train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config())
 model.to(device)
-
-torch.set_float32_matmul_precision("high")  # 
+model = torch.compile(model)  # does not work with python 3.12
 
 import time
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
@@ -245,7 +245,8 @@ for i in range(50):
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+    with torch.autocast(device_type=device, dtype=torch.bfloat16):
+        logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
     torch.cuda.synchronize()
