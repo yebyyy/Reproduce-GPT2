@@ -232,19 +232,27 @@ elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
 print("device: " + device)
 
 # Train
-train_loader = DataLoaderLite(4, 32)
+train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config())
 model.to(device)
 
+torch.set_float32_matmul_precision("high")  # 
+
+import time
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
 for i in range(50):
+    t1 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step {i}, loss {loss.item()}")
+    torch.cuda.synchronize()
+    t2 = time.time()
+    t = t2 - t1
+    tksec = train_loader.B * train_loader.T / t
+    print(f"step {i}, loss {loss.item()}, time {t:.2f}s, tokens/sec {tksec:.2f}")
 
 import sys; sys.exit(0)
 
