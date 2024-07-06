@@ -238,11 +238,31 @@ torch.set_float32_matmul_precision("high")
 train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
-# model = torch.compile(model)  # does not work with python 3.12
+model = torch.compile(model)  # does not work with python 3.12
+
+# Learning Rate Schedule
+import math
+max_lr = 6e-4
+min_lr = max_lr * 0.1
+warmup_steps = 10
+max_steps = 50
+def get_lr(it):
+    # 1. Linear warmup
+    if it < warmup_steps:
+        return max_lr * (it + 1) / warmup_steps   # it + 1 so avoid starting from 0
+    # 2. Constant min_lr
+    if it > max_steps:
+        return min_lr
+    # 3. Cosine decay
+    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff starts from 1 and goes to 0
+    return min_lr + coeff * (max_lr - min_lr)
+
 
 import time
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
-for i in range(50):
+for step in range(max_steps):
     t1 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
@@ -252,12 +272,17 @@ for i in range(50):
     loss.backward()
     # clip the global norm of the gradients to 1.0
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    # determine learning rate
+    lr = get_lr(step)
+    # set the learning rate
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
     optimizer.step()
     torch.cuda.synchronize()
     t2 = time.time()
     t = t2 - t1
     tksec = train_loader.B * train_loader.T / t
-    print(f"step {i}, loss {loss.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
+    print(f"step {step}, loss {loss.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
 
 import sys; sys.exit(0)
 
