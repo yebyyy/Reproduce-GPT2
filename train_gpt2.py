@@ -303,6 +303,7 @@ if ddp:
     # device_ids is a list of GPU ids that the model will be distributed to
     # output_device is the device where the output will be gathered
     # DDP will take care of the communication between the GPUs
+raw_model = model.module if ddp else model
 
 # Learning Rate Schedule
 import math
@@ -327,6 +328,7 @@ def get_lr(it):
 import time
 # optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the 
 optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
+
 for step in range(max_steps):
     t1 = time.time()
     optimizer.zero_grad()
