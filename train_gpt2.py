@@ -2,6 +2,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import inspect
 
 
 # The name of the variables are kept same as in the huggingface implementation
@@ -191,6 +192,27 @@ class GPT2(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+    
+    def configure_optimizers(self, weight_decay, learning_rate, device):
+        # start with the parameters that requires grad
+        param_dict = {pn : p for pn, p in self.named_parameters()}
+        param_dict = {pn : p for pn, p in param_dict.items() if p.requires_grad}  # pn is parameter name, p is parameter
+        # weight decay all the 2D parameters
+        # this means weight tensors in matmul and embeddings decay, biases and layernorms do not
+        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
+        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
+        optim_groups = [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": nodecay_params, "weight_decay": 0.0},
+        ]
+        num_decay_params = sum(p.numel() for p in decay_params)
+        num_nodecay_params = sum(p.numel() for p in nodecay_params)
+        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters
+        use_fused = fused_available and 'cuda' in device
+        print("using fused adam: %s" % use_fused)
+        extra_args = dict(fused=True) if use_fused else dict()
+        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=(0.9, 0.95), eps=1e-8, **extra_args)
+        return optimizer
 
 # -----------------------------------------------------------------------------------
 # Load Data
@@ -238,7 +260,7 @@ torch.set_float32_matmul_precision("high")
 train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
-model = torch.compile(model)  # does not work with python 3.12
+# model = torch.compile(model)  # does not work with python 3.12
 
 # Learning Rate Schedule
 import math
@@ -261,7 +283,8 @@ def get_lr(it):
 
 
 import time
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
+# optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the 
+optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 for step in range(max_steps):
     t1 = time.time()
     x, y = train_loader.next_batch()
