@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 import torch
+import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 import inspect
@@ -218,9 +219,11 @@ class GPT2(nn.Module):
 # Load Data
 import tiktoken
 class DataLoaderLite:
-    def __init__(self, B, T):
+    def __init__(self, B, T, process_rank=0, process_count=1):
         self.B = B
         self.T = T
+        self.process_rank = process_rank
+        self.process_count = process_count
         
         with open("input.txt", "r") as f:
             text = f.read()
@@ -231,7 +234,7 @@ class DataLoaderLite:
         print(f"loaded {len(self.tokens)} tokens")
         print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
 
-        self.current_position = 0
+        self.current_position = self.B * self.T * self.process_rank  # for example process_rank = 0 we start from 0, process_rank = 1 we start from 8192, process_rank = 2 we start from 16384...
     
     def next_batch(self):
         B, T = self.B, self.T
@@ -239,20 +242,40 @@ class DataLoaderLite:
         x = (buf[:-1]).view(B, T)  # inputs
         y = (buf[1: ]).view(B, T)  # targets
         # move the position
-        self.current_position += B * T
+        self.current_position += B * T * self.process_count  # B*T as a batch, then have to move process_count batches
         # reset the position if we reach the end
-        if self.current_position + B * T + 1 >= len(self.tokens):
-            self.current_position = 0
+        if self.current_position + (B * T * self.process_count + 1) >= len(self.tokens):
+            self.current_position = self.B * self.T * self.process_rank
         return x, y
 
-
-# Auto Detect GPU
-device = "cpu"
-if torch.cuda.is_available():
-    device = "cuda"
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    device = "mps"
-print("device: " + device)
+# DDP and Device
+# Use command torchrun --standalone --nproc_per_node=4 train_gpt2.py
+from torch.distributed import init_process_group, destroy_process_group
+import os
+ddp = int(os.environ.get('RANK', -1)) != -1 # is this a ddp run?
+if ddp:
+    # use of DDP atm demands CUDA, we set the device appropriately according to rank
+    assert torch.cuda.is_available(), "for now i think we need CUDA for DDP"
+    init_process_group(backend='nccl')
+    ddp_rank = int(os.environ['RANK'])
+    ddp_local_rank = int(os.environ['LOCAL_RANK'])
+    ddp_world_size = int(os.environ['WORLD_SIZE'])
+    device = f'cuda:{ddp_local_rank}'
+    torch.cuda.set_device(device)
+    master_process = ddp_rank == 0 # this process will do logging, checkpointing etc.
+else:
+    # vanilla, non-DDP run
+    ddp_rank = 0
+    ddp_local_rank = 0
+    ddp_world_size = 1
+    master_process = True
+    # attempt to autodetect device
+    device = "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    print(f"using device: {device}")
 
 torch.manual_seed(1337)
 if torch.cuda.is_available():
@@ -265,14 +288,21 @@ torch.set_float32_matmul_precision("high")
 total_batch_size = 524288  # 2^19
 B = 8
 T = 1024
-assert total_batch_size % (B * T) == 0
-grad_acc_steps = total_batch_size // (B * T)
-print(f"total batch size: {total_batch_size}, gradient accumulation steps: {grad_acc_steps}")
+assert total_batch_size % (B * T * ddp_world_size) == 0
+grad_acc_steps = total_batch_size // (B * T * ddp_world_size)
+if master_process:
+    print(f"total batch size: {total_batch_size}, gradient accumulation steps: {grad_acc_steps}")
 
-train_loader = DataLoaderLite(B, T)
+train_loader = DataLoaderLite(B, T, process_rank=ddp_rank, process_count=ddp_world_size)
 model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
 # model = torch.compile(model)  # does not work with python 3.12
+if ddp:
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[ddp_local_rank], output_device=device)
+    # DDP is a wrapper that wraps the model and distributes it across the GPUs
+    # device_ids is a list of GPU ids that the model will be distributed to
+    # output_device is the device where the output will be gathered
+    # DDP will take care of the communication between the GPUs
 
 # Learning Rate Schedule
 import math
@@ -309,7 +339,11 @@ for step in range(max_steps):
             logits, loss = model(x, y)
         loss = loss / grad_acc_steps  # divide by steps to average the loss
         loss_accum += loss.detach()
+        if ddp:
+            model.require_backward_grad_sync = (mini_step == grad_acc_steps - 1)
         loss.backward()
+    if ddp:
+        torch.distributed.all_reduce(loss_accum, op=torch.distributed.ReduceOp.AVG)
     # clip the global norm of the gradients to 1.0
     norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     # determine learning rate
@@ -321,8 +355,12 @@ for step in range(max_steps):
     torch.cuda.synchronize()
     t2 = time.time()
     t = t2 - t1
-    tksec = train_loader.B * train_loader.T * grad_acc_steps / t
-    print(f"step {step}, loss {loss_accum.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
+    tksec = train_loader.B * train_loader.T * grad_acc_steps * ddp_world_size / t
+    if master_process:
+        print(f"step {step}, loss {loss_accum.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
+
+if ddp:
+    destroy_process_group()
 
 import sys; sys.exit(0)
 
