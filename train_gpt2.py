@@ -76,7 +76,7 @@ class GPT2Config:
     vocab_size: int = 50257  # number of tokens = 50000 BPE merges(Each BPE merge will create a new token) + 256 bytes + 1 <|endoftext|> token
     n_layer: int = 12
     n_head: int = 12
-    n_embd: int = 768
+    n_embd: int = 768  # 128 * 6
 
 class GPT2(nn.Module):
 
@@ -236,9 +236,9 @@ print("device: " + device)
 torch.set_float32_matmul_precision("high")
 
 train_loader = DataLoaderLite(4, 1024)
-model = GPT2(GPT2Config())
+model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
-# model = torch.compile(model)  # does not work with python 3.12
+model = torch.compile(model)  # does not work with python 3.12
 
 import time
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
