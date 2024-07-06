@@ -238,10 +238,10 @@ torch.set_float32_matmul_precision("high")
 train_loader = DataLoaderLite(4, 1024)
 model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
-model = torch.compile(model)  # does not work with python 3.12
+# model = torch.compile(model)  # does not work with python 3.12
 
 import time
-optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the gradient
 for i in range(50):
     t1 = time.time()
     x, y = train_loader.next_batch()
@@ -250,12 +250,14 @@ for i in range(50):
     with torch.autocast(device_type=device, dtype=torch.bfloat16):
         logits, loss = model(x, y)
     loss.backward()
+    # clip the global norm of the gradients to 1.0
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
     torch.cuda.synchronize()
     t2 = time.time()
     t = t2 - t1
     tksec = train_loader.B * train_loader.T / t
-    print(f"step {i}, loss {loss.item()}, time {t:.2f}s, tokens/sec {tksec:.2f}")
+    print(f"step {i}, loss {loss.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
 
 import sys; sys.exit(0)
 
