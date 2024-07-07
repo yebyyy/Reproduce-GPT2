@@ -4,6 +4,7 @@ import torch.distributed
 import torch.nn as nn
 import torch.nn.functional as F
 import inspect
+from hellaswag import render_example, iterate_examples
 
 
 # The name of the variables are kept same as in the huggingface implementation
@@ -360,11 +361,20 @@ import time
 # optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), eps=1e-8)  # AdamW optimizer is a bug fix of Adam, it has a weight decay fix, which is a normalization of the 
 optimizer = model.configure_optimizers(weight_decay=0.1, learning_rate=6e-4, device=device)
 
+
+# Collect loss, accuracy
+log_dir = "log"
+os.makedirs(log_dir, exist_ok=True)  # create the log directory if it does not exist
+log_file = os.path.join(log_dir, f"log.txt")
+with open(log_file, "w") as f:
+    pass
+
 for step in range(max_steps):
     t1 = time.time()
+    last_step = (step == max_steps - 1)
 
     # evaluate validation loss every 100 steps
-    if step % 100 == 0:
+    if step % 250 == 0 or last_step:
         val_loss_accum = 0.0
         val_loss_steps = 20
         for _ in range(val_loss_steps):
@@ -377,10 +387,20 @@ for step in range(max_steps):
         if ddp:
             torch.distributed.all_reduce(val_loss_accum, op=torch.distributed.ReduceOp.SUM)
         if master_process:
-            print(f"validation loss: {val_loss_accum.item()}")
+            print(f"validation loss: {val_loss_accum.item():.4f}")
+            with open(log_file, "a") as f:   # append mode
+                f.write(f"{step}, val {val_loss_accum.item():.4f}\n")
+
+
+    # once in a while evaluate hellaswag
+    if step % 250 == 0 or last_step:
+        num_correct_norm = 0
+        num_total = 0
+        for i, example in enumerate(iterate_examples("val")):
+
 
     # once in a while we generate some text
-    if step > 0 and step % 100 == 0:
+    if (step > 0 and step % 250 == 0) or last_step:
         model.eval()
         num_return_sequences = 4
         max_length = 32
@@ -392,7 +412,8 @@ for step in range(max_steps):
         sample_rng.manual_seed(42 + ddp_rank)  # seed the random number generator
         with xgen.size(1) < max_length:
             with torch.no_grad():
-                logits, loss = model(xgen)
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                    logits, loss = model(xgen)
                 logits = logits[:, -1, :]
                 probs = F.softmax(logits, dim=-1)
                 topk, topix = torch.topk(probs, 50, dim=-1)
@@ -434,6 +455,9 @@ for step in range(max_steps):
     tksec = train_loader.B * train_loader.T * grad_acc_steps * ddp_world_size / t
     if master_process:
         print(f"step {step}, loss {loss_accum.item()}, norm {norm: .4f}, time {t:.2f}s, tokens/sec {tksec:.2f}")
+        with open(log_file, "a") as f:
+            f.write(f"{step}, train {loss_accum.item(): .6f}\n")
+
 
 if ddp:
     destroy_process_group()
