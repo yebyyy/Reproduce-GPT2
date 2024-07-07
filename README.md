@@ -9,4 +9,6 @@ Besides the **GPT2** paper, this repo also references the **GPT3** paper, which 
 
 The model training, optimization, and hyperparameter tuning follows both papers and implements **Flash Attention** as mentioned in both [FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness](https://arxiv.org/pdf/2205.14135) and [FlashAttention-2:Faster Attention with Better Parallelism and Work Partitioning](https://arxiv.org/pdf/2307.08691).
 
+The Dataset used to train the model is the 10BT sample from [Huggingface Fineweb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu?row=8).
+
 Since this repo uses `Pytorch`, the [huggingface GPT2 implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py) is also referenced.
