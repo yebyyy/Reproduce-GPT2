@@ -218,23 +218,44 @@ class GPT2(nn.Module):
 # -----------------------------------------------------------------------------------
 # Load Data
 import tiktoken
+import numpy as np
+
+def load_tokens(filename):
+    npt = np.load(filename)
+    ptt = torch.tensor(npt, dtype=torch.long)
+    return ptt
+
 class DataLoaderLite:
-    def __init__(self, B, T, process_rank=0, process_count=1):
+    def __init__(self, B, T, process_rank, process_count, split):
         self.B = B
         self.T = T
         self.process_rank = process_rank
         self.process_count = process_count
+        assert split in {'train', 'val'}
         
-        with open("input.txt", "r") as f:
-            text = f.read()
-        enc = tiktoken.get_encoding('gpt2')
-        tokens = enc.encode(text)
-        self.tokens = torch.tensor(tokens)
-        # Not moving to GPU here since don't want to waste GPU memory
-        print(f"loaded {len(self.tokens)} tokens")
-        print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
+         # get the shard filenames
+        data_root = "edu_fineweb10B"
+        shards = os.listdir(data_root)
+        shards = [s for s in shards if split in s]
+        shards = sorted(shards)
+        shards = [os.path.join(data_root, s) for s in shards]
+        self.shards = shards
+        assert len(shards) > 0, f"no shards found for split {split}"
+        if master_process:
+            print(f"found {len(shards)} shards for split {split}")
 
+        self.current_shard = 0
+        self.tokens = load_tokens(self.shards[self.current_shard])
         self.current_position = self.B * self.T * self.process_rank  # for example process_rank = 0 we start from 0, process_rank = 1 we start from 8192, process_rank = 2 we start from 16384...
+
+        # with open("input.txt", "r") as f:
+        #     text = f.read()
+        # enc = tiktoken.get_encoding('gpt2')
+        # tokens = enc.encode(text)
+        # self.tokens = torch.tensor(tokens)
+        # # Not moving to GPU here since don't want to waste GPU memory
+        # print(f"loaded {len(self.tokens)} tokens")
+        # print(f"1 epoch = {len(self.tokens) // (B * T)} batches")
     
     def next_batch(self):
         B, T = self.B, self.T
@@ -244,8 +265,12 @@ class DataLoaderLite:
         # move the position
         self.current_position += B * T * self.process_count  # B*T as a batch, then have to move process_count batches
         # reset the position if we reach the end
-        if self.current_position + (B * T * self.process_count + 1) >= len(self.tokens):
-            self.current_position = self.B * self.T * self.process_rank
+        if self.current_position + (B * T * self.process_count + 1) > len(self.tokens):
+            self.current_shard = (self.current_shard + 1) % len(self.shards)
+            self.tokens = load_tokens(self.shards[self.current_shard])
+            self.current_position = B * T * self.process_rank
+        # if self.current_position + (B * T * self.process_count + 1) >= len(self.tokens):
+        #     self.current_position = self.B * self.T * self.process_rank
         return x, y
 
 # DDP and Device
@@ -286,14 +311,14 @@ torch.set_float32_matmul_precision("high")
 
 # Gradient Accumulation for simulating large batch size
 total_batch_size = 524288  # 2^19
-B = 8
+B = 4
 T = 1024
 assert total_batch_size % (B * T * ddp_world_size) == 0
 grad_acc_steps = total_batch_size // (B * T * ddp_world_size)
 if master_process:
     print(f"total batch size: {total_batch_size}, gradient accumulation steps: {grad_acc_steps}")
 
-train_loader = DataLoaderLite(B, T, process_rank=ddp_rank, process_count=ddp_world_size)
+train_loader = DataLoaderLite(B, T, process_rank=ddp_rank, process_count=ddp_world_size, split='train')
 model = GPT2(GPT2Config(vocab_size=50304))
 model.to(device)
 # model = torch.compile(model)  # does not work with python 3.12
@@ -309,8 +334,8 @@ raw_model = model.module if ddp else model
 import math
 max_lr = 6e-4
 min_lr = max_lr * 0.1
-warmup_steps = 10
-max_steps = 50
+warmup_steps = 715  # 375M / 2^19 = 715 we warmup for the first 375M tokens and 2^19 tokens per batch
+max_steps = 19073  # 10e9 / 2^19 = 19073  we have 10B tokens and 2^19 tokens per batch
 def get_lr(it):
     # 1. Linear warmup
     if it < warmup_steps:
