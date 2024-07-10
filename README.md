@@ -11,4 +11,6 @@ The model training, optimization, and hyperparameter tuning follows both papers 
 
 The Dataset used to train the model is the 10BT sample from [Huggingface Fineweb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu?row=8).
 
+The model evaluation uses the [Hellaswag LLM Benchmark](https://arxiv.org/pdf/1905.07830), and achieved , which is .
+
 Since this repo uses `Pytorch`, the [huggingface GPT2 implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py) is also referenced.
