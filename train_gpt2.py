@@ -276,6 +276,29 @@ class DataLoaderLite:
         #     self.current_position = self.B * self.T * self.process_rank
         return x, y
 
+# helper function for HellaSwag eval
+# takes tokens, mask, and logits, returns the index of the completion with the lowest loss
+
+def get_most_likely_row(tokens, mask, logits):
+    # evaluate the autoregressive loss at all positions
+    shift_logits = (logits[..., :-1, :]).contiguous()
+    shift_tokens = (tokens[..., 1:]).contiguous()
+    flat_shift_logits = shift_logits.view(-1, shift_logits.size(-1))
+    flat_shift_tokens = shift_tokens.view(-1)
+    shift_losses = F.cross_entropy(flat_shift_logits, flat_shift_tokens, reduction='none')
+    shift_losses = shift_losses.view(tokens.size(0), -1)
+    # now get the average loss just for the completion region (where mask == 1), in each row
+    shift_mask = (mask[..., 1:]).contiguous() # we must shift mask, so we start at the last prompt token
+    masked_shift_losses = shift_losses * shift_mask
+    # sum and divide by the number of 1s in the mask
+    sum_loss = masked_shift_losses.sum(dim=1)
+    avg_loss = sum_loss / shift_mask.sum(dim=1)
+    # now we have a loss for each of the 4 completions
+    # the one with the lowest loss should be the most likely
+    pred_norm = avg_loss.argmin().item()
+    return pred_norm
+
+
 # DDP and Device
 # Use command torchrun --standalone --nproc_per_node=4 train_gpt2.py
 from torch.distributed import init_process_group, destroy_process_group
@@ -373,7 +396,7 @@ for step in range(max_steps):
     t1 = time.time()
     last_step = (step == max_steps - 1)
 
-    # evaluate validation loss every 100 steps
+    # evaluate validation loss every 250 steps
     if step % 250 == 0 or last_step:
         val_loss_accum = 0.0
         val_loss_steps = 20
@@ -393,10 +416,10 @@ for step in range(max_steps):
             if step > 0 and (step % 5000 == 0 or last_step):
                 checkpoints_dir = os.path.join(log_dir, f"model_{step:.05d}.pt")
                 checkpoints = {
-                    'model' = raw_model.state_dict(),
-                    'config' = raw_model.config,
-                    'step' = step
-                    'val_loss' = val_loss_accum.item()
+                    'model': raw_model.state_dict(),
+                    'config' : raw_model.config,
+                    'step': step,
+                    'val_loss': val_loss_accum.item()
                 }
                 torch.save(checkpoints, checkpoints_dir)
 
@@ -415,7 +438,7 @@ for step in range(max_steps):
             mask = mask.to(device)
             # get the logits
             with torch.no_grad():
-                with torch.autocast(device_type=device_type, dtype=torch.bfloat16):
+                with torch.autocast(device_type=device, dtype=torch.bfloat16):
                     logits, loss = model(tokens)
                 pred_norm = get_most_likely_row(tokens, mask, logits)  # predict the most likely row
             num_total += 1
@@ -424,8 +447,8 @@ for step in range(max_steps):
         if ddp:
             num_total = torch.tensor(num_total, dtype=torch.long, device=device)
             num_correct_norm = torch.tensor(num_correct_norm, dtype=torch.long, device=device)
-            dist.all_reduce(num_total, op=dist.ReduceOp.SUM)
-            dist.all_reduce(num_correct_norm, op=dist.ReduceOp.SUM)
+            torch.distributed.all_reduce(num_total, op=torch.distributed.ReduceOp.SUM)
+            torch.distributed.all_reduce(num_correct_norm, op=torch.distributed.ReduceOp.SUM)
             num_total = num_total.item()
             num_correct_norm = num_correct_norm.item()
         acc_norm = num_correct_norm / num_total
